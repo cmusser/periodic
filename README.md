@@ -1,6 +1,6 @@
 # periodic
 
-Simple periodic command runner
+Lightweight periodic command runner
 
 ## Introduction
 
@@ -9,7 +9,7 @@ commands runs asynchronously with respect to the timer, which means
 that the next invocation will happen at the desired interval, even if
 the command is still running. Limits on the number of concurrently-running
 copies of a process are enforced. One use of `periodic` is inside
-Dockers containers where something nees to happen repeatedly and you
+Docker containers where something needs to happen repeatedly and you
 don't want to go through the hassle of of setting up `cron`.
 
 ## Usage
@@ -31,7 +31,7 @@ Use the following options on the command line:
 
 #### Example:
 
-	cargo run -- -i 2 'ls -l /some/interesting/file'
+	cargo run -- -i 2 -c 'ls -l /some/interesting/file'
 
 ### Configuration File Specification Mode
 
