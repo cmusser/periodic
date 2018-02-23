@@ -1,0 +1,17 @@
+[package]
+name = "periodic"
+version = "0.0.2"
+authors = ["cmusser@sonic.net"]
+
+[dependencies]
+clap = "2.29.3"
+futures = "0.1"
+serde = "1.0"
+serde_derive = "1.0.10"
+serde_yaml = "0.7.1"
+tokio-core = "0.1"
+tokio-process = "0.1.1"
+
+[[bin]]
+name = "periodic"
+path = "src/periodic.rs"

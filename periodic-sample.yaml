@@ -1,0 +1,8 @@
+- name: directory listing (long)
+  interval_secs: 10
+  max_concurrent: 1
+  cmd: ls -l
+- name: test command
+  interval_secs: 2
+  max_concurrent: 5
+  cmd: ./test.sh
