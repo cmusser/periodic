@@ -1,8 +1,8 @@
-- name: directory listing (long)
-  interval_secs: 10
-  max_concurrent: 1
-  cmd: ls -l
-- name: test command
+- name: Single line, with delay
   interval_secs: 2
   max_concurrent: 5
-  cmd: ./test.sh
+  cmd: test/print-delay.sh
+- name: Multi line, on stdout/stderr
+  interval_secs: 10
+  max_concurrent: 1
+  cmd: test/print-multiline-stdout-stderr.sh

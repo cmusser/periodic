@@ -78,7 +78,7 @@ fn get_future(task: PeriodicTask, handle: Handle) -> Box<Future<Item=(), Error=s
                 }
             }
         } else {
-            println!("not invoking \"{}\"max concurrent invocations ({}) reached",
+            println!("not invoking \"{}\", max concurrent invocations ({}) reached",
                      task.name, task.max_concurrent);
         }
         future::ok(())
