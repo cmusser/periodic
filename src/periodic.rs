@@ -22,6 +22,7 @@ extern crate serde_derive;
 use tokio_core::reactor::{Core, Handle, Interval};
 use tokio_process::CommandExt;
 
+const VERSION: &'static str = "0.0.3";
 const DEFAULT_INTERVAL_SECS: &'static str = "5";
 const DEFAULT_MAX_CONCURRENT: &'static str = "3";
 const DEFAULT_NAME:&'static str = "periodic task";
@@ -166,8 +167,8 @@ fn run_future_from_args(matches: ArgMatches, mut core: Core) {
 fn main() {
 
     let matches = App::new("periodic")
-        .version("0.0.2")
-        .author("Chuck Musser <cmusser@noip.com>")
+        .version(VERSION)
+        .author("Chuck Musser <cmusser@sonic.net>")
         .about("run commands periodically")
         .arg(Arg::with_name("file")
              .short("f").long("file").takes_value(true)

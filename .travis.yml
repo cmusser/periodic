@@ -1,0 +1,16 @@
+language: rust
+rust:
+- stable
+- beta
+- nightly
+matrix:
+  allow_failures:
+  - rust: nightly
+deploy:
+  provider: releases
+  api_key:
+    secure: gx40JYqtkY3ajU37CW7CFXtHW0GlXctBpaQiY++PdsVRD08i0SiNqwC0tA3TkP8F1Isc7sdgWk+T/OcDHYaeX3GLOwkC0IfiN7ntD6XPwaIHpIK79Z0MNBscemyEQB098AKMkflu+dIIigStK9zEBCM2GAiACekNfx5vFJqQzI69eBLYG2C300t/N0V0lzITtkRMmUpIxVFz3S1iWoWbXtfsztgv6YBJ1zfOn9/Vheqwuw9ncYz2kMXDEktjcf5mGIBgXld2TtsatVGvtSWIDlqTZccGvlb5mTEW+xO5WOxwF0NtsP25HiXPwBRVZM+eo/ueXZ41ntTsRfHxD2ywSkiw3WZHddW+36VwJazljLFVC143D42q/mAspBAEvhtgIvWcSmiBFgUPLhQKvCMzAIImibgMm6esJ1XWb+jKurJh8IvH6gZbN1IC+t5gcJ9fG4OhcG2Sywmqhfzf/2+Ww7GeestNzYtw64t5yZRFxA5PpG00SYC8n5E1UrE05DkRn7x3VFXWG5KQ6B+k+Yucrfjc8tQ+ZA/kZKgjkDMjub6hUhzm/McRLBrSqaQ72PBiUmyh6C0WmX4VTime/7MWJaBSM+UI0OxqP8CjzEsiJ4+ddiP5APP+0F6uNB23W0D9QPIKqefsJuNFe0md8gnp/ngvTV/SoKtPjw1Vj66A4EU=
+  file: target/release/periodic
+  skip_cleanup: true
+  on:
+    tags: true
