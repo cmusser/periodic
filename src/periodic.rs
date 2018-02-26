@@ -115,7 +115,6 @@ fn get_future(task: PeriodicTask, handle: Handle) -> Box<Future<Item=(), Error=s
                     Err(e) =>  {
                         println!("couldn't start \"{}\": {}", task.name, e);
                         counter_clone.replace(counter_clone.get() - 1);
-                        handle.spawn(futures::done(Err(())))
                     }
                 }
             } else {
