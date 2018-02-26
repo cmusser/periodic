@@ -56,33 +56,25 @@ ones are probably not appropriate for real-world use.
 
 	cargo run -- -f periodic.yaml
 
+## Pausing Tasks
+
+If a file named `paused.yaml` exists in the periodic process' current
+working directory and contains a YAML list of task names, tasks
+matching these names will not be run at the timeout interval. You can
+use this to pause some or all of the tasks specified in `periodic.yaml`.
+The file is read for every interval for all tasks, so changes will take
+effect the next time the task is scheduled to be run.
 
 ## Testing
 
-There is a `test.sh` program you can use to try it out. This script simply
-sleeps a number of seconds and prints its start and end time. By default, it
-sleeps for 5 seconds. If a file named `delay.txt` exists in the same directory,
-it will read a numeric value from  that file.
+### Scripts
+The `test` directory contains some tests, which are referenced by both
+`periodic-sample.yaml` and `paused-sample.yaml`.
 
-## Implementation Notes
+- `print-delay.sh`: This sleeps a number of seconds and prints its
+  start and end time. By default, it sleeps for 5 seconds. If a file
+  named `delay.txt` exists in the same directory, it will read a
+  numeric value from that file.
 
-### Enforcing a Limit on the Number of Concurrent Processes per "Task"
-
-This demonstrates (or abuses) the technique capturing a variable that
-started life in the scope of a function in a longer-lived scope: the
-closure associated with a boxed future.
-
-Inside the `get_future()` function, a count of concurrently running
-processes is created, then explicitly moved into the `for_each()`
-closure, so that its ownership is transferred to the longer-lasting
-scope than begins when each periodic timeout occurs. It gets cloned
-before the `Command` future is created (along with the name of the
-task). WHen `then()` is called on the command, its closure captures
-the variable. At that point the counter can be decremented. It's done
-in this way so that the `for_each()` closture and the `then()` future
-can share a reference to this value. The former increments the value
-and the latter decrements it.
-
-One possible simplification is moving the counter clone into the
-command closure, rather than using `map()` to pass it in via an
-argument.
+- `print-multiline-stdout-stderr.sh`: prints 5 lines, alternating
+   between std stdout and stderr, sleeping a second between each.
