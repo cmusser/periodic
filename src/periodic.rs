@@ -9,6 +9,7 @@ use std::cell::Cell;
 use std::error::Error;
 use std::fs::File;
 use std::io::prelude::*;
+use std::path::Path;
 use std::process::Command;
 use std::rc::Rc;
 use std::str;
@@ -40,46 +41,87 @@ fn default_name() -> String { String::from(DEFAULT_NAME) }
 fn default_interval_secs() -> u64 { DEFAULT_INTERVAL_SECS.parse::<u64>().unwrap() }
 fn default_max_concurrent() -> u32 { DEFAULT_MAX_CONCURRENT.parse::<u32>().unwrap() }
 
+fn task_paused(task_name: &str) -> bool {
+
+    let paused_filename = Path::new("./paused.yaml");
+    if ! paused_filename.is_file() {
+        false
+    } else {
+        match File::open(paused_filename) {
+            Err(err) => {
+                println!("couldn't open {:?} ({})", paused_filename, err.description());
+                false
+            },
+            Ok(mut file) => {
+                let mut yaml = String::new();
+                match file.read_to_string(&mut yaml) {
+                    Err(err) => {
+                        println!("couldn't read {:?}: {}", paused_filename, err.description());
+                        false
+                    },
+                    Ok(_) => {
+                        match serde_yaml::from_str::<Vec<String>>(&yaml) {
+                            Ok(paused_tasks) => {
+                                match paused_tasks.into_iter().find(|paused_task| { task_name == paused_task }) {
+                                    Some(_) => true,
+                                    None => false,
+                                }
+                            },
+                            Err(e) => {
+                                println!("{}", e.description());
+                                false
+                            }
+                        }
+                    },
+                }
+            },
+        }
+    }
+}
+
 fn get_future(task: PeriodicTask, handle: Handle) -> Box<Future<Item=(), Error=std::io::Error>> {
     let interval = Interval::new(Duration::from_secs(task.interval_secs), &handle).unwrap();
 
     let concurrent_count = Rc::new(Cell::new(0));
 
     Box::new(interval.for_each(move |_| {
-        let cur = concurrent_count.get();
-        if  cur < task.max_concurrent {
-            let new_count = cur + 1;
-            concurrent_count.replace(new_count);
-            if new_count > 1 {
-                println!("invoking additional \'{}\" ({} now running)", task.name, new_count);
-            }
-            let cmd_array = task.cmd.split_whitespace().collect::<Vec<&str>>();
-            let counter_clone = concurrent_count.clone();
-            let task_name = task.name.clone();
 
-            match Command::new(&cmd_array[0]).args(cmd_array[1..].into_iter()).spawn_async(&handle) {
-                Ok(command) => {
-                    let f = command.map(|_| { (task_name, counter_clone) })
-                        .then(|args| {
-                            let (task_name, counter_clone) = args.unwrap();
-                            let new_count = counter_clone.get() - 1;
-                            counter_clone.replace(new_count);
-                            if new_count > 0 {
-                                println!("\"{}\" finished, {} still running", task_name, new_count);
-                            }
-                            future::ok(())
-                        });
-                    handle.spawn(f)
-                },
-                Err(e) =>  {
-                    println!("couldn't start \"{}\": {}", task.name, e);
-                    counter_clone.replace(counter_clone.get() - 1);
-                    handle.spawn(futures::done(Err(())))
+        if !task_paused(&task.name) {
+            let cur = concurrent_count.get();
+            if  cur < task.max_concurrent {
+                let new_count = cur + 1;
+                concurrent_count.replace(new_count);
+                if new_count > 1 {
+                    println!("invoking additional \'{}\" ({} now running)", task.name, new_count);
                 }
+                let cmd_array = task.cmd.split_whitespace().collect::<Vec<&str>>();
+                let counter_clone = concurrent_count.clone();
+                let task_name = task.name.clone();
+
+                match Command::new(&cmd_array[0]).args(cmd_array[1..].into_iter()).spawn_async(&handle) {
+                    Ok(command) => {
+                        let f = command.map(|_| { (task_name, counter_clone) })
+                            .then(|args| {
+                                let (task_name, counter_clone) = args.unwrap();
+                                let new_count = counter_clone.get() - 1;
+                                counter_clone.replace(new_count);
+                                if new_count > 0 {
+                                    println!("\"{}\" finished, {} still running", task_name, new_count);
+                                }
+                                future::ok(())
+                            });
+                        handle.spawn(f)
+                    },
+                    Err(e) =>  {
+                        println!("couldn't start \"{}\": {}", task.name, e);
+                        counter_clone.replace(counter_clone.get() - 1);
+                        handle.spawn(futures::done(Err(())))
+                    }
+                }
+            } else {
+                println!("not invoking \"{}\", max concurrent invocations ({}) reached",
+                         task.name, task.max_concurrent);
             }
-        } else {
-            println!("not invoking \"{}\", max concurrent invocations ({}) reached",
-                     task.name, task.max_concurrent);
         }
         future::ok(())
     }))
