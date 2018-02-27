@@ -2,6 +2,8 @@
 
 Lightweight periodic command runner
 
+Linux: [![Build Status](https://travis-ci.org/cmusser/periodic.svg?branch=master)](https://travis-ci.org/cmusser/periodic)
+
 ## Introduction
 
 This program executes one or more commands on a periodic basis. The
