@@ -1,18 +1,73 @@
+# Based on the "trust" template v0.1.2
+# https://github.com/japaric/trust/tree/v0.1.2
+
+dist: trusty
 language: rust
-script:
-  - cargo build --release --verbose
-rust:
-- stable
-- beta
-- nightly
+services: docker
+sudo: required
+
+env:
+  global:
+    - CRATE_NAME=periodic
+
 matrix:
-  allow_failures:
-  - rust: nightly
+  # TODO These are all the build jobs. Adjust as necessary. Comment out what you
+  # don't need
+  include:
+
+    # Linux
+    - env: TARGET=x86_64-unknown-linux-gnu DISABLE_TESTS=1
+    - env: TARGET=x86_64-unknown-linux-musl DISABLE_TESTS=1
+
+    # OSX
+    - env: TARGET=x86_64-apple-darwin DISABLE_TESTS=1
+      os: osx
+
+    # Testing other channels
+    - env: TARGET=x86_64-unknown-linux-gnu DISABLE_TESTS=1
+      rust: nightly
+    - env: TARGET=x86_64-apple-darwin DISABLE_TESTS=1
+      os: osx
+      rust: nightly
+
+before_install:
+  - set -e
+  - rustup self update
+
+install:
+  - sh ci/install.sh
+  - source ~/.cargo/env || true
+
+script:
+  - bash ci/script.sh
+
+after_script: set +e
+
+before_deploy:
+  - sh ci/before_deploy.sh
+
 deploy:
   provider: releases
   api_key:
     secure: gx40JYqtkY3ajU37CW7CFXtHW0GlXctBpaQiY++PdsVRD08i0SiNqwC0tA3TkP8F1Isc7sdgWk+T/OcDHYaeX3GLOwkC0IfiN7ntD6XPwaIHpIK79Z0MNBscemyEQB098AKMkflu+dIIigStK9zEBCM2GAiACekNfx5vFJqQzI69eBLYG2C300t/N0V0lzITtkRMmUpIxVFz3S1iWoWbXtfsztgv6YBJ1zfOn9/Vheqwuw9ncYz2kMXDEktjcf5mGIBgXld2TtsatVGvtSWIDlqTZccGvlb5mTEW+xO5WOxwF0NtsP25HiXPwBRVZM+eo/ueXZ41ntTsRfHxD2ywSkiw3WZHddW+36VwJazljLFVC143D42q/mAspBAEvhtgIvWcSmiBFgUPLhQKvCMzAIImibgMm6esJ1XWb+jKurJh8IvH6gZbN1IC+t5gcJ9fG4OhcG2Sywmqhfzf/2+Ww7GeestNzYtw64t5yZRFxA5PpG00SYC8n5E1UrE05DkRn7x3VFXWG5KQ6B+k+Yucrfjc8tQ+ZA/kZKgjkDMjub6hUhzm/McRLBrSqaQ72PBiUmyh6C0WmX4VTime/7MWJaBSM+UI0OxqP8CjzEsiJ4+ddiP5APP+0F6uNB23W0D9QPIKqefsJuNFe0md8gnp/ngvTV/SoKtPjw1Vj66A4EU=
-  file: target/release/periodic
+  file_glob: true
+  file: $CRATE_NAME-$TRAVIS_TAG-$TARGET.*
   skip_cleanup: true
   on:
+    condition: $TRAVIS_RUST_VERSION = stable
     tags: true
+
+cache: cargo
+before_cache:
+  # Travis can't cache files that are not readable by "others"
+  - chmod -R a+r $HOME/.cargo
+
+branches:
+  only:
+    # release tags
+    - /^v\d+\.\d+\.\d+.*$/
+    - master
+
+notifications:
+  email:
+    on_success: never
