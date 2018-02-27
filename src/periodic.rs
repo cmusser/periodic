@@ -22,7 +22,7 @@ extern crate serde_derive;
 use tokio_core::reactor::{Core, Handle, Interval};
 use tokio_process::CommandExt;
 
-const VERSION: &'static str = "0.0.4";
+const VERSION: &'static str = "0.0.1";
 const DEFAULT_INTERVAL_SECS: &'static str = "5";
 const DEFAULT_MAX_CONCURRENT: &'static str = "3";
 const DEFAULT_NAME:&'static str = "periodic task";
