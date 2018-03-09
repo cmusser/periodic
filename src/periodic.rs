@@ -41,6 +41,12 @@ struct PeriodicTask {
     cmd: String,
 }
 
+enum TaskStatus {
+    OkToRun,
+    Paused,
+    Ending,
+}
+
 fn default_name() -> String { String::from(DEFAULT_NAME) }
 fn default_interval_secs() -> u64 { DEFAULT_INTERVAL_SECS.parse::<u64>().unwrap() }
 fn default_max_concurrent() -> u32 { DEFAULT_MAX_CONCURRENT.parse::<u32>().unwrap() }
@@ -83,8 +89,14 @@ fn task_in_list(list_filename: &str, task_name: &str) -> bool {
     }
 }
 
-fn ok_to_invoke(task_name: &str) -> bool {
-    !task_in_list("./paused.yaml", task_name) && !task_in_list("./stop.yaml", task_name)
+fn get_task_status(task_name: &str) -> TaskStatus {
+    if task_in_list("./paused.yaml", task_name) {
+        TaskStatus::Paused
+    } else if task_in_list("./stop.yaml", task_name) {
+        TaskStatus::Ending
+    } else {
+        TaskStatus::OkToRun
+    }
 }
 
 fn get_monitor_future(stopped: Rc<RwLock<HashMap<String, bool>>>,
@@ -112,53 +124,55 @@ fn get_task_future(task: PeriodicTask, stopped: Rc<RwLock<HashMap<String, bool>>
     
     Box::new(interval.for_each(move |_| {
 
-        if ok_to_invoke(&task.name) {
-            println!("invoking {}", task.name);
-            let cur = concurrent_count.get();
-            if  cur < task.max_concurrent {
-                let new_count = cur + 1;
-                concurrent_count.replace(new_count);
-                if new_count > 1 {
-                    println!("invoking additional \'{}\" ({} now running)", task.name, new_count);
-                }
-                let cmd_array = task.cmd.split_whitespace().collect::<Vec<&str>>();
-                let counter_clone = concurrent_count.clone();
-                let stopped_clone = stopped.clone();
-                let task_name = task.name.clone();
-
-                match Command::new(&cmd_array[0]).args(cmd_array[1..].into_iter()).spawn_async(&handle) {
-                    Ok(command) => {
-                        let f = command.map(|_| { (task_name, counter_clone, stopped_clone) })
-                            .then(|args| {
-                                let (task_name, counter_clone, stopped_clone) = args.unwrap();
-                                let new_count = counter_clone.get() - 1;
-                                counter_clone.replace(new_count);
-                                if new_count > 0 {
-                                    println!("\"{}\" finished, {} still running", task_name, new_count);
-                                } else {
-                                    let mut stopped_mut = stopped_clone.write().unwrap();
-                                    let task_stopped = task_in_list("./stop.yaml", &task_name);
-                                    println!("done. task stopped: {}", task_stopped);
-                                    if task_stopped == true {
-                                        println!("marking {} as stopped", task_name);
-                                    }
-                                    stopped_mut.insert(task_name, task_stopped);
-                                }
-                                future::ok(())
-                            });
-                        handle.spawn(f)
-                    },
-                    Err(e) =>  {
-                        println!("couldn't start \"{}\": {}", task.name, e);
-                        counter_clone.replace(counter_clone.get() - 1);
+        match get_task_status(&task.name) {
+            TaskStatus::OkToRun => {
+                println!("invoking {}", task.name);
+                let cur = concurrent_count.get();
+                if  cur < task.max_concurrent {
+                    let new_count = cur + 1;
+                    concurrent_count.replace(new_count);
+                    if new_count > 1 {
+                        println!("invoking additional \'{}\" ({} now running)", task.name, new_count);
                     }
+                    let cmd_array = task.cmd.split_whitespace().collect::<Vec<&str>>();
+                    let counter_clone = concurrent_count.clone();
+                    let stopped_clone = stopped.clone();
+                    let task_name = task.name.clone();
+
+                    match Command::new(&cmd_array[0]).args(cmd_array[1..].into_iter()).spawn_async(&handle) {
+                        Ok(command) => {
+                            let f = command.map(|_| { (task_name, counter_clone, stopped_clone) })
+                                .then(|args| {
+                                    let (task_name, counter_clone, stopped_clone) = args.unwrap();
+                                    let new_count = counter_clone.get() - 1;
+                                    counter_clone.replace(new_count);
+                                    if new_count > 0 {
+                                        println!("\"{}\" finished, {} still running", task_name, new_count);
+                                    } else {
+                                        let mut stopped_mut = stopped_clone.write().unwrap();
+                                        let task_stopped = task_in_list("./stop.yaml", &task_name);
+                                        println!("done. task stopped: {}", task_stopped);
+                                        if task_stopped == true {
+                                            println!("marking {} as stopped", task_name);
+                                        }
+                                        stopped_mut.insert(task_name, task_stopped);
+                                    }
+                                    future::ok(())
+                                });
+                            handle.spawn(f)
+                        },
+                        Err(e) =>  {
+                            println!("couldn't start \"{}\": {}", task.name, e);
+                            counter_clone.replace(counter_clone.get() - 1);
+                        }
+                    }
+                } else {
+                    println!("not invoking \"{}\", max concurrent invocations ({}) reached",
+                             task.name, task.max_concurrent);
                 }
-            } else {
-                println!("not invoking \"{}\", max concurrent invocations ({}) reached",
-                         task.name, task.max_concurrent);
-            }
-        } else {
-            println!("{} is paused or stopped", task.name);
+            },
+            TaskStatus::Paused => println!("{} is paused", task.name),
+            TaskStatus::Ending => println!("{} will end after all invocations finish", task.name),
         }
         future::ok(())
     }))
