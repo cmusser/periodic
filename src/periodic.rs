@@ -117,7 +117,13 @@ fn get_monitor_future(stopped: Rc<RwLock<HashMap<String, bool>>>,
 }
 
 fn get_task_future(task: PeriodicTask, stopped: Rc<RwLock<HashMap<String, bool>>>,
-              handle: Handle) -> Box<Future<Item=(), Error=std::io::Error>> {
+                   handle: Handle) -> Box<Future<Item=(), Error=std::io::Error>> {
+
+    {
+        let mut stopped_mut = stopped.write().unwrap();
+        stopped_mut.insert(task.name.clone(), false);
+    }
+
     let interval = Interval::new(Duration::from_secs(task.interval_secs), &handle).unwrap();
 
     let concurrent_count = Rc::new(Cell::new(0));
@@ -206,11 +212,6 @@ fn run_futures_from_file(path: &str, stopped: Rc<RwLock<HashMap<String, bool>>>,
 fn run_future_from_args(matches: ArgMatches, stopped: Rc<RwLock<HashMap<String, bool>>>,
                         mut core: Core) {
     if let Some(cmd) = matches.value_of("command") {
-        let name = String::from(matches.value_of("name").unwrap());
-        {
-            let mut stopped_mut = stopped.write().unwrap();
-            stopped_mut.insert(name, false);
-        }
         let task = PeriodicTask { name: String::from(matches.value_of("name").unwrap()),
                                   interval_secs: matches.value_of("interval").unwrap().parse::<u64>().unwrap(),
                                   max_concurrent: matches.value_of("max-concurrent").unwrap().parse::<u32>().unwrap(),
