@@ -1,8 +1,8 @@
-- name: Single line, with delay
+- name: single-line-delay
   interval_secs: 2
   max_concurrent: 5
   cmd: test/print-delay.sh
-- name: Multi line, on stdout/stderr
+- name: multi-line-stdout-stderr
   interval_secs: 10
   max_concurrent: 1
   cmd: test/print-multiline-stdout-stderr.sh

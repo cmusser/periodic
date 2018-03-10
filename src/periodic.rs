@@ -25,6 +25,7 @@ use tokio_core::reactor::{Core, Handle, Interval};
 use tokio_process::CommandExt;
 
 const VERSION: &'static str = "0.0.1";
+const DEFAULT_CONTROL_FILE: &'static str = "./control.yaml";
 const DEFAULT_INTERVAL_SECS: &'static str = "5";
 const DEFAULT_MAX_CONCURRENT: &'static str = "3";
 const DEFAULT_NAME:&'static str = "periodic task";
@@ -41,16 +42,24 @@ struct PeriodicTask {
 }
 
 enum TaskStatus {
-    OkToRun,
+    Running,
     Paused,
-    Ending,
+    Stopping,
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+#[allow(non_camel_case_types)]
+enum TaskControl {
+    run,
+    pause,
+    stop,
 }
 
 fn default_name() -> String { String::from(DEFAULT_NAME) }
 fn default_interval_secs() -> u64 { DEFAULT_INTERVAL_SECS.parse::<u64>().unwrap() }
 fn default_max_concurrent() -> u32 { DEFAULT_MAX_CONCURRENT.parse::<u32>().unwrap() }
 
-fn get_list(list_filename: &str) -> Option<Vec<String>> {
+fn get_list(list_filename: &str) -> Option<HashMap<String, TaskControl>> {
 
     let list_path = Path::new(list_filename);
     if ! list_path.is_file() {
@@ -69,7 +78,7 @@ fn get_list(list_filename: &str) -> Option<Vec<String>> {
                         None
                     },
                     Ok(_) => {
-                        match serde_yaml::from_str::<Vec<String>>(&yaml) {
+                        match serde_yaml::from_str::<HashMap<String, TaskControl>>(&yaml) {
                             Ok(task_names) => Some(task_names),
                             Err(e) => {
                                 println!("{}", e.description());
@@ -83,31 +92,20 @@ fn get_list(list_filename: &str) -> Option<Vec<String>> {
     }
 }
 
-fn task_in_list(list_filename: &str, task_name: &str) -> bool {
-
-    match get_list(list_filename) {
-        Some(task_names) => {
-            match task_names.into_iter().find(|cur_task_name| { task_name == cur_task_name }) {
-                Some(_) => true,
-                None => false,
-            }
-        },
-        None => false
-    }
-}
-
 fn get_monitor_future(concurrent_counts: Rc<RwLock<HashMap<String, u32>>>,
                       handle: Handle) -> Box<Future<Item=(), Error=std::io::Error>> {
 
     let interval = Interval::new(Duration::from_secs(1), &handle).unwrap();
     Box::new(interval.for_each(move |_| {
-        match get_list("./stop.yaml") {
+        match get_list(DEFAULT_CONTROL_FILE) {
             Some(task_list) => {
                 let counts_mut = concurrent_counts.read().unwrap();
                 let mut remaining_tasks = counts_mut.len();
                 for (name, &count) in counts_mut.iter() {
-                    if count == 0 && task_list.contains(name) {
-                        remaining_tasks -= 1;
+                    if let Some(control) = task_list.get(name) {
+                        if count == 0 && *control == TaskControl::stop {
+                            remaining_tasks -= 1;
+                        }
                     }
                 }
                 match remaining_tasks {
@@ -133,13 +131,13 @@ fn get_task_future(task: PeriodicTask, concurrent_counts: Rc<RwLock<HashMap<Stri
     Box::new(interval.for_each(move |_| {
 
         match get_task_status(&task.name) {
-            TaskStatus::OkToRun => {
+            TaskStatus::Running => {
                 let mut counts_mut = concurrent_counts.write().unwrap();
                 let mut cur = counts_mut.get_mut(&task.name).unwrap();
                 if  *cur < task.max_concurrent {
                     *cur += 1;
                     if *cur > 1 {
-                        println!("invoking additional \'{}\" ({} now running)", task.name, *cur);
+                        println!("invoking additional \"{}\" ({} now running)", task.name, *cur);
                     }
                     let cmd_array = task.cmd.split_whitespace().collect::<Vec<&str>>();
                     let concurrent_counts_clone = concurrent_counts.clone();
@@ -171,20 +169,28 @@ fn get_task_future(task: PeriodicTask, concurrent_counts: Rc<RwLock<HashMap<Stri
                              task.name, task.max_concurrent);
                 }
             },
-            TaskStatus::Paused => {},
-            TaskStatus::Ending => println!("{} will end after all invocations finish", task.name),
+            TaskStatus::Paused => println!("\"{}\" is paused", task.name),
+            TaskStatus::Stopping => println!("\"{}\" will stop after all invocations finish", task.name),
         }
         future::ok(())
     }))
 }
 
 fn get_task_status(task_name: &str) -> TaskStatus {
-    if task_in_list("./paused.yaml", task_name) {
-        TaskStatus::Paused
-    } else if task_in_list("./stop.yaml", task_name) {
-        TaskStatus::Ending
-    } else {
-        TaskStatus::OkToRun
+
+    match get_list(DEFAULT_CONTROL_FILE) {
+        Some(tasks) => {
+            if let Some(control) = tasks.get(task_name) {
+                match control {
+                    &TaskControl::run => TaskStatus::Running,
+                    &TaskControl::pause => TaskStatus::Paused,
+                    &TaskControl::stop => TaskStatus::Stopping,
+                }
+            } else {
+                TaskStatus::Running
+            }
+        },
+        None => TaskStatus::Running
     }
 }
 
