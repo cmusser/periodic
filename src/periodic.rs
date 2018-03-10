@@ -5,7 +5,6 @@ extern crate serde_yaml;
 extern crate tokio_core;
 extern crate tokio_process;
 
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs::File;
@@ -51,35 +50,30 @@ fn default_name() -> String { String::from(DEFAULT_NAME) }
 fn default_interval_secs() -> u64 { DEFAULT_INTERVAL_SECS.parse::<u64>().unwrap() }
 fn default_max_concurrent() -> u32 { DEFAULT_MAX_CONCURRENT.parse::<u32>().unwrap() }
 
-fn task_in_list(list_filename: &str, task_name: &str) -> bool {
+fn get_list(list_filename: &str) -> Option<Vec<String>> {
 
     let list_path = Path::new(list_filename);
     if ! list_path.is_file() {
-        false
+        None
     } else {
         match File::open(list_path) {
             Err(err) => {
                 println!("couldn't open {:?} ({})", list_path, err.description());
-                false
+                None
             },
             Ok(mut file) => {
                 let mut yaml = String::new();
                 match file.read_to_string(&mut yaml) {
                     Err(err) => {
                         println!("couldn't read {:?}: {}", list_path, err.description());
-                        false
+                        None
                     },
                     Ok(_) => {
                         match serde_yaml::from_str::<Vec<String>>(&yaml) {
-                            Ok(task_names) => {
-                                match task_names.into_iter().find(|cur_task_name| { task_name == cur_task_name }) {
-                                    Some(_) => true,
-                                    None => false,
-                                }
-                            },
+                            Ok(task_names) => Some(task_names),
                             Err(e) => {
                                 println!("{}", e.description());
-                                false
+                                None
                             }
                         }
                     },
@@ -87,6 +81,101 @@ fn task_in_list(list_filename: &str, task_name: &str) -> bool {
             },
         }
     }
+}
+
+fn task_in_list(list_filename: &str, task_name: &str) -> bool {
+
+    match get_list(list_filename) {
+        Some(task_names) => {
+            match task_names.into_iter().find(|cur_task_name| { task_name == cur_task_name }) {
+                Some(_) => true,
+                None => false,
+            }
+        },
+        None => false
+    }
+}
+
+fn get_monitor_future(concurrent_counts: Rc<RwLock<HashMap<String, u32>>>,
+                      handle: Handle) -> Box<Future<Item=(), Error=std::io::Error>> {
+
+    let interval = Interval::new(Duration::from_secs(1), &handle).unwrap();
+    Box::new(interval.for_each(move |_| {
+        match get_list("./stop.yaml") {
+            Some(task_list) => {
+                let counts_mut = concurrent_counts.read().unwrap();
+                let mut remaining_tasks = counts_mut.len();
+                for (name, &count) in counts_mut.iter() {
+                    if count == 0 && task_list.contains(name) {
+                        remaining_tasks -= 1;
+                    }
+                }
+                match remaining_tasks {
+                    0 => return Err(std::io::Error::new(ErrorKind::Interrupted, "all tasks stopped")),
+                    _ => Ok(())
+                }
+            },
+            None => Ok(()),
+        }
+    }))
+}
+
+fn get_task_future(task: PeriodicTask, concurrent_counts: Rc<RwLock<HashMap<String, u32>>>,
+                   handle: Handle) -> Box<Future<Item=(), Error=std::io::Error>> {
+
+    {
+        let mut counts_mut = concurrent_counts.write().unwrap();
+        counts_mut.insert(task.name.clone(), 0);
+    }
+
+    let interval = Interval::new(Duration::from_secs(task.interval_secs), &handle).unwrap();
+
+    Box::new(interval.for_each(move |_| {
+
+        match get_task_status(&task.name) {
+            TaskStatus::OkToRun => {
+                let mut counts_mut = concurrent_counts.write().unwrap();
+                let mut cur = counts_mut.get_mut(&task.name).unwrap();
+                if  *cur < task.max_concurrent {
+                    *cur += 1;
+                    if *cur > 1 {
+                        println!("invoking additional \'{}\" ({} now running)", task.name, *cur);
+                    }
+                    let cmd_array = task.cmd.split_whitespace().collect::<Vec<&str>>();
+                    let concurrent_counts_clone = concurrent_counts.clone();
+                    let task_name = task.name.clone();
+
+                    match Command::new(&cmd_array[0]).args(cmd_array[1..].into_iter()).spawn_async(&handle) {
+                        Ok(command) => {
+                            handle.spawn(command.map(|_| { (task_name, concurrent_counts_clone) })
+                                .then(|args| {
+                                    let (task_name, concurrent_counts) = args.unwrap();
+                                    let mut counts_mut = concurrent_counts.write().unwrap();
+                                    let cur = counts_mut.get_mut(&task_name).unwrap();
+                                    *cur -= 1;
+                                    if *cur > 0 {
+                                        println!("\"{}\" finished, {} still running", task_name, *cur);
+                                    }
+                                    future::ok(())
+                                }))
+                        },
+                        Err(e) =>  {
+                            println!("couldn't start \"{}\": {}", task.name, e);
+                            let mut counts_mut = concurrent_counts.write().unwrap();
+                            let mut cur = counts_mut.get_mut(&task.name).unwrap();
+                            *cur -= 1;
+                        }
+                    }
+                } else {
+                    println!("not invoking \"{}\", max concurrent invocations ({}) reached",
+                             task.name, task.max_concurrent);
+                }
+            },
+            TaskStatus::Paused => {},
+            TaskStatus::Ending => println!("{} will end after all invocations finish", task.name),
+        }
+        future::ok(())
+    }))
 }
 
 fn get_task_status(task_name: &str) -> TaskStatus {
@@ -99,92 +188,7 @@ fn get_task_status(task_name: &str) -> TaskStatus {
     }
 }
 
-fn get_monitor_future(stopped: Rc<RwLock<HashMap<String, bool>>>,
-                      handle: Handle) -> Box<Future<Item=(), Error=std::io::Error>> {
-
-    let interval = Interval::new(Duration::from_secs(1), &handle).unwrap();
-    Box::new(interval.for_each(move |_| {
-        println!("check for stopped");
-        let stopped_mut = stopped.read().unwrap();
-        match stopped_mut.values().into_iter().find(|stopped| {
-            println!("{}", stopped);
-            **stopped == false
-        }) {
-            Some(_) => Ok(()),
-            None => Err(std::io::Error::new(ErrorKind::Interrupted, "all tasks stopped")),
-        }
-    }))
-}
-
-fn get_task_future(task: PeriodicTask, stopped: Rc<RwLock<HashMap<String, bool>>>,
-                   handle: Handle) -> Box<Future<Item=(), Error=std::io::Error>> {
-
-    {
-        let mut stopped_mut = stopped.write().unwrap();
-        stopped_mut.insert(task.name.clone(), false);
-    }
-
-    let interval = Interval::new(Duration::from_secs(task.interval_secs), &handle).unwrap();
-
-    let concurrent_count = Rc::new(Cell::new(0));
-    
-    Box::new(interval.for_each(move |_| {
-
-        match get_task_status(&task.name) {
-            TaskStatus::OkToRun => {
-                println!("invoking {}", task.name);
-                let cur = concurrent_count.get();
-                if  cur < task.max_concurrent {
-                    let new_count = cur + 1;
-                    concurrent_count.replace(new_count);
-                    if new_count > 1 {
-                        println!("invoking additional \'{}\" ({} now running)", task.name, new_count);
-                    }
-                    let cmd_array = task.cmd.split_whitespace().collect::<Vec<&str>>();
-                    let counter_clone = concurrent_count.clone();
-                    let stopped_clone = stopped.clone();
-                    let task_name = task.name.clone();
-
-                    match Command::new(&cmd_array[0]).args(cmd_array[1..].into_iter()).spawn_async(&handle) {
-                        Ok(command) => {
-                            let f = command.map(|_| { (task_name, counter_clone, stopped_clone) })
-                                .then(|args| {
-                                    let (task_name, counter_clone, stopped_clone) = args.unwrap();
-                                    let new_count = counter_clone.get() - 1;
-                                    counter_clone.replace(new_count);
-                                    if new_count > 0 {
-                                        println!("\"{}\" finished, {} still running", task_name, new_count);
-                                    } else {
-                                        let mut stopped_mut = stopped_clone.write().unwrap();
-                                        let task_stopped = task_in_list("./stop.yaml", &task_name);
-                                        println!("done. task stopped: {}", task_stopped);
-                                        if task_stopped == true {
-                                            println!("marking {} as stopped", task_name);
-                                        }
-                                        stopped_mut.insert(task_name, task_stopped);
-                                    }
-                                    future::ok(())
-                                });
-                            handle.spawn(f)
-                        },
-                        Err(e) =>  {
-                            println!("couldn't start \"{}\": {}", task.name, e);
-                            counter_clone.replace(counter_clone.get() - 1);
-                        }
-                    }
-                } else {
-                    println!("not invoking \"{}\", max concurrent invocations ({}) reached",
-                             task.name, task.max_concurrent);
-                }
-            },
-            TaskStatus::Paused => println!("{} is paused", task.name),
-            TaskStatus::Ending => println!("{} will end after all invocations finish", task.name),
-        }
-        future::ok(())
-    }))
-}
-
-fn run_futures_from_file(path: &str, stopped: Rc<RwLock<HashMap<String, bool>>>,
+fn run_futures_from_file(path: &str, concurrent_counts: Rc<RwLock<HashMap<String, u32>>>,
                          mut core: Core) {
     match File::open(path) {
         Err(err) => println!("couldn't open {} ({})", path, err.description()),
@@ -197,7 +201,7 @@ fn run_futures_from_file(path: &str, stopped: Rc<RwLock<HashMap<String, bool>>>,
                         Ok(tasks_descriptions) => {
                             let mut tasks: Vec<Box<Future<Item=(), Error=std::io::Error>>> = Vec::new();
                             for task in tasks_descriptions {
-                                tasks.push(get_task_future(task, stopped.clone(), core.handle()));
+                                tasks.push(get_task_future(task, concurrent_counts.clone(), core.handle()));
                             }
                             drop(core.run(future::join_all(tasks)))
                         },
@@ -209,16 +213,16 @@ fn run_futures_from_file(path: &str, stopped: Rc<RwLock<HashMap<String, bool>>>,
     }
 }
 
-fn run_future_from_args(matches: ArgMatches, stopped: Rc<RwLock<HashMap<String, bool>>>,
+fn run_future_from_args(matches: ArgMatches, concurrent_counts: Rc<RwLock<HashMap<String, u32>>>,
                         mut core: Core) {
     if let Some(cmd) = matches.value_of("command") {
         let task = PeriodicTask { name: String::from(matches.value_of("name").unwrap()),
                                   interval_secs: matches.value_of("interval").unwrap().parse::<u64>().unwrap(),
                                   max_concurrent: matches.value_of("max-concurrent").unwrap().parse::<u32>().unwrap(),
                                   cmd: String::from(cmd)};
-        let stopped_clone = stopped.clone();
-        let monitor_future = get_monitor_future(stopped, core.handle());
-        let task_future = get_task_future(task, stopped_clone, core.handle());
+        let concurrent_counts_clone = concurrent_counts.clone();
+        let monitor_future = get_monitor_future(concurrent_counts, core.handle());
+        let task_future = get_task_future(task, concurrent_counts_clone, core.handle());
         
         drop(core.run(future::join_all(vec![monitor_future, task_future])))
     } else {
@@ -249,11 +253,11 @@ fn main() {
              .help("descriptive name for command"))
         .get_matches();
 
-    let stopped = Rc::new(RwLock::new(HashMap::<String,bool>::new()));
+    let concurrent_counts = Rc::new(RwLock::new(HashMap::<String,u32>::new()));
     let core = Core::new().unwrap();
     if matches.is_present("file") {
-        run_futures_from_file(matches.value_of("file").unwrap(), stopped.clone(), core)
+        run_futures_from_file(matches.value_of("file").unwrap(), concurrent_counts.clone(), core)
     } else {
-        run_future_from_args(matches, stopped.clone(), core)
+        run_future_from_args(matches, concurrent_counts.clone(), core)
     }
 }
