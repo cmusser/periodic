@@ -26,10 +26,10 @@ use tokio_core::reactor::{Core, Handle, Interval};
 use tokio_process::CommandExt;
 use tokio_signal::unix::{Signal, SIGTERM, SIGUSR1, SIGUSR2};
 
-const VERSION: &'static str = "0.0.2";
+const VERSION: &'static str = "0.1.0";
 const DEFAULT_CONTROL_FILE: &'static str = "./control.yaml";
 const DEFAULT_INTERVAL_SECS: &'static str = "5";
-const DEFAULT_MAX_CONCURRENT: &'static str = "3";
+const DEFAULT_MAX_CONCURRENT: &'static str = "1";
 const DEFAULT_NAME:&'static str = "periodic task";
 
 #[derive(Debug, Deserialize)]

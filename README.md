@@ -58,14 +58,37 @@ ones are probably not appropriate for real-world use.
 
 	cargo run -- -f periodic.yaml
 
-## Pausing Tasks
+## Runtime Control
 
-If a file named `paused.yaml` exists in the periodic process' current
-working directory and contains a YAML list of task names, tasks
-matching these names will not be run at the timeout interval. You can
-use this to pause some or all of the tasks specified in `periodic.yaml`.
-The file is read for every interval for all tasks, so changes will take
-effect the next time the task is scheduled to be run.
+ Tasks can be in three modes, controlled at runtime:
+
+- `run`: The task command is invoked regularly, on the specified
+  interval. This is the default.
+
+- `pause`: The task command will not be invoked on the interval, but
+  existing ones will run to completion. Paused tasks can be restarted.
+
+- `stop`: The task command will not be invoked on the interval, but
+  existing ones will run to completion. This is similar to being
+  paused, but it marks the task in a way that, once all tasks are in
+  this mode, `periodic` will exit. The purpose of this is to provide
+  a graceful shutdown of the tasks.
+
+### File-based
+
+If a file named `control.yaml` exists in the current working directory
+of `periodic` and is of the form shown, below, the tasks modes can
+be specified explicitly. The file looks like:
+<task-name>: <run|pause|stop>
+
+### Signal-based
+
+As a convenience, the mode of all tasks can be controlle by sending a
+signal to the `periodic` process:
+
+- `SIGUSR1`: pause all tasks
+- `SIGUSR2`: resume all tasks
+- `SIGTERM`: stop all tasks.
 
 ## Testing
 
