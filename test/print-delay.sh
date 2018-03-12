@@ -6,7 +6,7 @@ if [ -f delay.txt ] ; then
 else
     DELAY=5
 fi
-echo -n "%0 "
+echo -n "$0 (PID $$): "
 sleep $DELAY
-END=$(date '+%H:%M:%S')
-echo "$$: start: $START end: $END"
+END=
+echo "start $START, end $(date '+%H:%M:%S')"
