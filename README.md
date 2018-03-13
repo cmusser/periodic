@@ -7,20 +7,21 @@ Linux: [![Build Status](https://travis-ci.org/cmusser/periodic.svg?branch=master
 ## Introduction
 
 This program executes one or more commands on a periodic basis. The
-commands runs asynchronously with respect to the timer, which means
-that the next invocation will happen at the desired interval, even if
-the command is still running. Limits on the number of concurrently-running
-copies of a process are enforced. One use of `periodic` is inside
-Docker containers where something needs to happen repeatedly and you
-don't want to go through the hassle of of setting up `cron`.
+commands run asynchronously with respect to their timer, which means
+that an already-invoked process won't prevent the next invocation from
+starting on the desired interval. Limits on the number of
+concurrently-running copies of a process are enforced. One use of
+`periodic` is inside Docker containers where something needs to happen
+repeatedly and you don't want to go through the hassle of of setting
+up `cron`.
 
 ## Usage
 
-There are two modes, one in which a single command is specified with
-command line parameters and another in which one or more commands
-are specified in a YAML-format configuration file.
+There are two ways to use `periodic`. A single command can be run via
+command line arguments and one or more commands can be run if you
+specify them in a YAML-format configuration file.
 
-### Command-line Specification Mode
+### Using Command-line Arguments
 Use the following options on the command line:
 
 |Option|Description|Notes|
@@ -28,14 +29,14 @@ Use the following options on the command line:
 |`-i`|interval |The amount of time between each invocation, in seconds.|
 |`-c`|command |Command to invoke. If it has arguments, quote the whole thing.|
 |`-m`|max-concurrent|Maximum number of invocations allowed to launch.|
-|`-n`|name|Descriptive name for the periodic task.|
+|`-n`|name|Name for the periodic task.|
 
 
 #### Example:
 
 	cargo run -- -i 2 -c 'ls -l /some/interesting/file'
 
-### Configuration File Specification Mode
+### Using a Configuration File
 
 Use the following option on the command line.
 
@@ -52,7 +53,7 @@ ones are probably not appropriate for real-world use.
 |interval |The amount of time between each invocation, in seconds.|
 |command |Command to invoke.|
 |max-concurrent|Maximum number of invocations allowed to launch.|
-|name|Descriptive name for the periodic task.|
+|name|Name for the periodic task.|
 
 #### Example:
 
@@ -60,7 +61,7 @@ ones are probably not appropriate for real-world use.
 
 ## Runtime Control
 
- Tasks can be in three modes, controlled at runtime:
+ Tasks can be in three modes, which can be changed dynamically:
 
 - `run`: The task command is invoked regularly, on the specified
   interval. This is the default.
@@ -71,19 +72,20 @@ ones are probably not appropriate for real-world use.
 - `stop`: The task command will not be invoked on the interval, but
   existing ones will run to completion. This is similar to being
   paused, but it marks the task in a way that, once all tasks are in
-  this mode, `periodic` will exit. The purpose of this is to provide
-  a graceful shutdown of the tasks.
+  this mode and all invocations are completed, `periodic` will
+  exit. The purpose of this is to provide a graceful shutdown of the
+  tasks.
 
 ### File-based
 
 If a file named `control.yaml` exists in the current working directory
 of `periodic` and is of the form shown, below, the tasks modes can
-be specified explicitly. The file looks like:
-<task-name>: <run|pause|stop>
+be specified explicitly. Entries in the file looks like:
+`task-name`: `<run|pause|stop>`
 
 ### Signal-based
 
-As a convenience, the mode of all tasks can be controlle by sending a
+As a convenience, the mode of all tasks can be controlled by sending a
 signal to the `periodic` process:
 
 - `SIGUSR1`: pause all tasks
