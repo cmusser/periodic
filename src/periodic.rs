@@ -26,7 +26,7 @@ use tokio_core::reactor::{Core, Handle, Interval};
 use tokio_process::CommandExt;
 use tokio_signal::unix::{Signal, SIGTERM, SIGUSR1, SIGUSR2};
 
-const VERSION: &'static str = "0.1.0";
+const VERSION: &'static str = "0.1.1";
 const DEFAULT_CONTROL_FILE: &'static str = "./control.yaml";
 const DEFAULT_INTERVAL_SECS: &'static str = "5";
 const DEFAULT_MAX_CONCURRENT: &'static str = "1";
@@ -196,41 +196,44 @@ fn get_monitor_future(task_db: Rc<TaskStateDb>,
     }))
 }
 
+fn invoke_command(task: &PeriodicTask, task_db: &Rc<TaskStateDb>, handle: &Handle) {
+    if task_db.incr_concurrent_maybe(&task.name, task.max_concurrent) {
+        let cmd_array = task.cmd.split_whitespace().collect::<Vec<&str>>();
+        let task_db_clone = task_db.clone();
+        let task_name = task.name.clone();
+
+        match Command::new(&cmd_array[0]).args(cmd_array[1..].into_iter()).spawn_async(&handle) {
+            Ok(command) => {
+                handle.spawn(command.map(|_| { (task_name, task_db_clone) })
+                             .then(|args| {
+                                 let (task_name, task_db) = args.unwrap();
+                                 let count = task_db.decr_concurrent(&task_name);
+                                 if count > 0 {
+                                     println!("\"{}\" finished, {} still running", task_name, count);
+                                 }
+                                 future::ok(())
+                             }))
+            },
+            Err(e) =>  {
+                println!("couldn't start \"{}\": {}", task.name, e);
+                task_db.decr_concurrent(&task.name);
+            }
+        }
+    }
+}
+
 fn get_task_future(task: PeriodicTask, task_db: Rc<TaskStateDb>,
                    handle: Handle) -> Box<Future<Item=(), Error=std::io::Error>> {
 
     task_db.add_new_task(&task.name);
+    invoke_command(&task, &task_db, &handle);
 
     let interval = Interval::new(Duration::from_secs(task.interval_secs), &handle).unwrap();
 
     Box::new(interval.for_each(move |_| {
 
         match task_db.get_task_mode(&task.name) {
-            TaskMode::run => {
-                if task_db.incr_concurrent_maybe(&task.name, task.max_concurrent) {
-                    let cmd_array = task.cmd.split_whitespace().collect::<Vec<&str>>();
-                    let task_db_clone = task_db.clone();
-                    let task_name = task.name.clone();
-
-                    match Command::new(&cmd_array[0]).args(cmd_array[1..].into_iter()).spawn_async(&handle) {
-                        Ok(command) => {
-                            handle.spawn(command.map(|_| { (task_name, task_db_clone) })
-                                .then(|args| {
-                                    let (task_name, task_db) = args.unwrap();
-                                    let count = task_db.decr_concurrent(&task_name);
-                                    if count > 0 {
-                                        println!("\"{}\" finished, {} still running", task_name, count);
-                                    }
-                                    future::ok(())
-                                }))
-                        },
-                        Err(e) =>  {
-                            println!("couldn't start \"{}\": {}", task.name, e);
-                            task_db.decr_concurrent(&task.name);
-                        }
-                    }
-                }
-            },
+            TaskMode::run => invoke_command(&task, &task_db, &handle),
             TaskMode::pause => println!("\"{}\" is paused", task.name),
             TaskMode::stop => {},
         }
