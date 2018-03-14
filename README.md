@@ -92,16 +92,16 @@ signal to the `periodic` process:
 - `SIGUSR2`: resume all tasks
 - `SIGTERM`: stop all tasks.
 
-## Testing
+## Test Scripts
 
-### Scripts
-The `test` directory contains some tests, which are referenced by both
-`periodic-sample.yaml` and `paused-sample.yaml`.
+The `test` directory contains some example scripts that can be run by
+`periodic` in order to test it out. They are referenced by both
+`periodic-sample.yaml` and `control-sample.yaml`.
 
 - `print-delay.sh`: This sleeps a number of seconds and prints its
   start and end time. By default, it sleeps for 5 seconds. If a file
   named `delay.txt` exists in the same directory, it will read a
-  numeric value from that file.
+  numeric value from that file and use that as the delay interval.
 
 - `print-multiline-stdout-stderr.sh`: prints 5 lines, alternating
    between std stdout and stderr, sleeping a second between each.

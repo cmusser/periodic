@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 START=$(date '+%H:%M:%S')
 if [ -f delay.txt ] ; then

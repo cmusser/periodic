@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 for i in $(seq 5) ; do
     if [ $(expr $i % 2) == 0 ] ; then
