@@ -1,5 +1,7 @@
+extern crate chrono;
 extern crate clap;
 extern crate futures;
+extern crate regex;
 extern crate serde;
 extern crate serde_yaml;
 extern crate tokio_core;
@@ -18,19 +20,22 @@ use std::str;
 use std::sync::RwLock;
 use std::time::Duration;
 
+use chrono::prelude::*;
 use clap::{App, Arg, ArgMatches};
 use futures::{future, Future, Stream};
+use regex::Regex;
 #[macro_use]
 extern crate serde_derive;
-use tokio_core::reactor::{Core, Handle, Interval};
+use tokio_core::reactor::{Core, Handle, Interval, Timeout};
 use tokio_process::CommandExt;
 use tokio_signal::unix::{Signal, SIGTERM, SIGUSR1, SIGUSR2};
 
-const VERSION: &'static str = "0.1.1";
+const VERSION: &'static str = "0.1.2";
 const DEFAULT_CONTROL_FILE: &'static str = "./control.yaml";
 const DEFAULT_INTERVAL_SECS: &'static str = "5";
 const DEFAULT_MAX_CONCURRENT: &'static str = "1";
 const DEFAULT_NAME:&'static str = "periodic task";
+const DAY_SECONDS:u64 = (60 * 60 * 24);
 
 #[derive(Debug, Deserialize)]
 struct PeriodicTask {
@@ -223,25 +228,30 @@ fn invoke_command(task: &PeriodicTask, task_db: &Rc<TaskStateDb>, handle: &Handl
 }
 
 fn get_task_future(task: PeriodicTask, task_db: Rc<TaskStateDb>,
-                   handle: Handle) -> Box<Future<Item=(), Error=std::io::Error>> {
+                   handle: Handle, start_delay: Duration) -> Box<Future<Item=(), Error=std::io::Error>> {
+
+    let start_timeout: Timeout = Timeout::new(start_delay, &handle).unwrap();
 
     task_db.add_new_task(&task.name);
-    invoke_command(&task, &task_db, &handle);
 
-    let interval = Interval::new(Duration::from_secs(task.interval_secs), &handle).unwrap();
-
-    Box::new(interval.for_each(move |_| {
-
-        match task_db.get_task_mode(&task.name) {
-            TaskMode::run => invoke_command(&task, &task_db, &handle),
-            TaskMode::pause => println!("\"{}\" is paused", task.name),
-            TaskMode::stop => {},
-        }
-        future::ok(())
+    if start_delay.as_secs() > 0 {
+        println!("starting in {}", start_delay.as_secs());
+    }
+    Box::new(start_timeout.and_then(|_| {
+        invoke_command(&task, &task_db, &handle);
+        let interval = Interval::new(Duration::from_secs(task.interval_secs), &handle).unwrap();
+        interval.for_each(move |_| {
+            match task_db.get_task_mode(&task.name) {
+                TaskMode::run => invoke_command(&task, &task_db, &handle),
+                TaskMode::pause => println!("\"{}\" is paused", task.name),
+                TaskMode::stop => {},
+            }
+            future::ok(())
+        })
     }))
 }
 
-fn run_futures_from_file(path: &str, task_db: Rc<TaskStateDb>, mut core: Core) {
+fn run_futures_from_file(path: &str, task_db: Rc<TaskStateDb>, mut core: Core, start_delay: Duration) {
     match File::open(path) {
         Err(err) => println!("couldn't open {} ({})", path, err.description()),
         Ok(mut file) => {
@@ -257,7 +267,7 @@ fn run_futures_from_file(path: &str, task_db: Rc<TaskStateDb>, mut core: Core) {
                             tasks.push(get_signal_future(task_db.clone(), SIGUSR2, TaskMode::run, core.handle()));
                             tasks.push(get_signal_future(task_db.clone(), SIGTERM, TaskMode::stop, core.handle()));
                             for task in tasks_descriptions {
-                                tasks.push(get_task_future(task, task_db.clone(), core.handle()));
+                                tasks.push(get_task_future(task, task_db.clone(), core.handle(), start_delay));
                             }
                             drop(core.run(future::join_all(tasks)))
                         },
@@ -269,7 +279,7 @@ fn run_futures_from_file(path: &str, task_db: Rc<TaskStateDb>, mut core: Core) {
     }
 }
 
-fn run_future_from_args(matches: ArgMatches, task_db: Rc<TaskStateDb>, mut core: Core) {
+fn run_future_from_args(matches: ArgMatches, task_db: Rc<TaskStateDb>, mut core: Core, start_delay: Duration) {
     if let Some(cmd) = matches.value_of("command") {
         let task = PeriodicTask { name: String::from(matches.value_of("name").unwrap()),
                                   interval_secs: matches.value_of("interval").unwrap().parse::<u64>().unwrap(),
@@ -279,11 +289,36 @@ fn run_future_from_args(matches: ArgMatches, task_db: Rc<TaskStateDb>, mut core:
                            get_signal_future(task_db.clone(), SIGUSR1, TaskMode::pause, core.handle()),
                            get_signal_future(task_db.clone(), SIGUSR2, TaskMode::run, core.handle()),
                            get_signal_future(task_db.clone(), SIGTERM, TaskMode::stop, core.handle()),
-                           get_task_future(task, task_db.clone(), core.handle())];
+                           get_task_future(task, task_db.clone(), core.handle(), start_delay)];
 
         drop(core.run(future::join_all(futures)))
     } else {
         println!("command not specified")
+    }
+}
+
+fn get_start_delay(matches: &ArgMatches) -> Result<Duration, String> {
+
+    if let Some(start_at) = matches.value_of("start-time") {
+        let re = Regex::new(r"(?P<hour>\d{2}):(?P<minute>\d{2})").unwrap();
+        match re.captures(start_at) {
+            Some(time) => {
+                let now = Utc::now();
+                if let Some(start_at) = Local::today().and_hms_opt((&time["hour"]).parse::<u32>().unwrap(),
+                                                                   (&time["minute"]).parse::<u32>().unwrap(), 0) {
+                    let start_delay = match start_at.signed_duration_since(now).num_seconds() {
+                        diff if diff >= 0 => diff as u64,
+                        diff => DAY_SECONDS - (diff.abs() as u64) ,
+                    };
+                    Ok(Duration::from_secs(start_delay))
+                } else {
+                    Err(String::from("invalid values found in start time"))
+                }
+            },
+            None => Err(String::from("invalid format for start time"))
+        }
+    } else {
+        Ok(Duration::from_secs(0))
     }
 }
 
@@ -308,13 +343,20 @@ fn main() {
         .arg(Arg::with_name("name").empty_values(false)
              .short("n").long("name").default_value(DEFAULT_NAME)
              .help("descriptive name for command"))
+        .arg(Arg::with_name("start-time").short("s").long("start-time").takes_value(true)
+             .help("start time for tasks, formatted as HH:MM. Defaults to now."))
         .get_matches();
 
-    let task_db = Rc::new(TaskStateDb::new());
-    let core = Core::new().unwrap();
-    if matches.is_present("file") {
-        run_futures_from_file(matches.value_of("file").unwrap(), task_db.clone(), core)
-    } else {
-        run_future_from_args(matches, task_db.clone(), core)
+    match get_start_delay(&matches) {
+         Ok(start_delay) => {
+             let task_db = Rc::new(TaskStateDb::new());
+             let core = Core::new().unwrap();
+             if matches.is_present("file") {
+                 run_futures_from_file(matches.value_of("file").unwrap(), task_db.clone(), core, start_delay)
+             } else {
+                 run_future_from_args(matches, task_db.clone(), core, start_delay)
+             }
+         },
+        Err(e) => println!("{}", e),
     }
 }
