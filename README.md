@@ -30,6 +30,7 @@ Use the following options on the command line:
 |`-c`|command |Command to invoke. If it has arguments, quote the whole thing.|
 |`-m`|max-concurrent|Maximum number of invocations allowed to launch.|
 |`-n`|name|Name for the periodic task.|
+|`-s`|start-time|start time for tasks, formatted as HH:MM. Defaults to now.|
 
 
 #### Example:
