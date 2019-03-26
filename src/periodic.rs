@@ -30,7 +30,7 @@ use tokio_core::reactor::{Core, Handle, Interval, Timeout};
 use tokio_process::CommandExt;
 use tokio_signal::unix::{Signal, SIGTERM, SIGUSR1, SIGUSR2};
 
-const VERSION: &'static str = "0.1.2";
+const VERSION: &'static str = "1.0.0";
 const DEFAULT_CONTROL_FILE: &'static str = "./control.yaml";
 const DEFAULT_INTERVAL_SECS: &'static str = "5";
 const DEFAULT_MAX_CONCURRENT: &'static str = "1";
@@ -297,28 +297,51 @@ fn run_future_from_args(matches: ArgMatches, task_db: Rc<TaskStateDb>, mut core:
     }
 }
 
-fn get_start_delay(matches: &ArgMatches) -> Result<Duration, String> {
+fn get_start_delay_from_next(next: &str) -> Result<Duration, String> {
 
-    if let Some(start_at) = matches.value_of("start-time") {
-        let re = Regex::new(r"(?P<hour>\d{2}):(?P<minute>\d{2})").unwrap();
-        match re.captures(start_at) {
-            Some(time) => {
-                let now = Utc::now();
-                if let Some(start_at) = Local::today().and_hms_opt((&time["hour"]).parse::<u32>().unwrap(),
-                                                                   (&time["minute"]).parse::<u32>().unwrap(), 0) {
-                    let start_delay = match start_at.signed_duration_since(now).num_seconds() {
-                        diff if diff >= 0 => diff as u64,
-                        diff => DAY_SECONDS - (diff.abs() as u64) ,
-                    };
-                    Ok(Duration::from_secs(start_delay))
-                } else {
-                    Err(String::from("invalid values found in start time"))
-                }
-            },
-            None => Err(String::from("invalid format for start time"))
-        }
-    } else {
-        Ok(Duration::from_secs(0))
+    let re = Regex::new(r"(?P<interval>hour|minute)(\+(?P<after>\d{1,2}))?$").unwrap();
+    match re.captures(next) {
+        Some(time) => {
+            let after = match time.name("after") {
+                Some(num) => num.as_str().parse::<u32>().unwrap(),
+                None => 0,
+            };
+            let now = Local::now();
+            let start_at = if &time["interval"] == "hour" {
+                let next = now + chrono::Duration::hours(1);
+                Local::today().and_hms(next.hour(), after, 0)
+            } else {
+                let next = now + chrono::Duration::minutes(1);
+                Local::today().and_hms(next.hour(), next.minute(), after)
+            };
+            let start_delay = match start_at.signed_duration_since(now).num_seconds() {
+                diff if diff >= 0 => diff as u64,
+                diff => DAY_SECONDS - (diff.abs() as u64),
+            };
+            Ok(Duration::from_secs(start_delay))
+        },
+        None => Err(String::from(format!("invalid format for start time: {}", next)))
+    }
+}
+
+fn get_start_delay_from_hh_mm(start_at: &str) -> Result<Duration, String> {
+
+    let re = Regex::new(r"(?P<hour>\d{2}):(?P<minute>\d{2})").unwrap();
+    match re.captures(start_at) {
+        Some(time) => {
+            let now = Utc::now();
+            if let Some(start_at) = Local::today().and_hms_opt((&time["hour"]).parse::<u32>().unwrap(),
+                                                               (&time["minute"]).parse::<u32>().unwrap(), 0) {
+                let start_delay = match start_at.signed_duration_since(now).num_seconds() {
+                    diff if diff >= 0 => diff as u64,
+                    diff => DAY_SECONDS - (diff.abs() as u64) ,
+                };
+                Ok(Duration::from_secs(start_delay))
+            } else {
+                Err(String::from(format!("invalid values found in start time: {}", start_at)))
+            }
+        },
+        None => Err(String::from(format!("invalid format for start time: {}", start_at)))
     }
 }
 
@@ -330,7 +353,7 @@ fn main() {
         .about("run commands periodically")
         .arg(Arg::with_name("file").empty_values(false)
              .short("f").long("file")
-             .help("YAML file containing task descriptions. If set, overrides all other args."))
+             .help("YAML file containing task descriptions. If set, overrides task-related args."))
         .arg(Arg::with_name("command").empty_values(false)
              .short("c").long("command")
              .help("command to run periodically' (required if no command file specified)"))
@@ -344,10 +367,17 @@ fn main() {
              .short("n").long("name").default_value(DEFAULT_NAME)
              .help("descriptive name for command"))
         .arg(Arg::with_name("start-time").short("s").long("start-time").takes_value(true)
-             .help("start time for tasks, formatted as HH:MM. Defaults to now."))
+             .help(concat!("start time for tasks, either \"HH:MM\" for an absolute time ",
+                   "or \"hour(+MM)\" or \"minute(+SS)\" to start at the next hour ",
+                   "or minute, with an optional extra delay. Defaults to now.")))
         .get_matches();
 
-    match get_start_delay(&matches) {
+    let start_delay = match matches.value_of("start-time") {
+        Some(value) => get_start_delay_from_next(value).or_else(|_| get_start_delay_from_hh_mm(value)),
+        None => Ok(Duration::from_secs(0)),
+    };
+
+    match start_delay {
          Ok(start_delay) => {
              let task_db = Rc::new(TaskStateDb::new());
              let core = Core::new().unwrap();
