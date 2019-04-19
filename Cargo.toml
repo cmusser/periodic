@@ -1,6 +1,6 @@
 [package]
 name = "periodic"
-version = "1.0.0"
+version = "1.0.1"
 authors = ["cmusser@sonic.net"]
 
 [dependencies]

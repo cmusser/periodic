@@ -21,7 +21,7 @@ use std::sync::RwLock;
 use std::time::Duration;
 
 use chrono::prelude::*;
-use clap::{App, Arg, ArgMatches};
+use clap::{App, Arg, ArgMatches, crate_authors, crate_version};
 use futures::{future, Future, Stream};
 use regex::Regex;
 #[macro_use]
@@ -30,7 +30,6 @@ use tokio_core::reactor::{Core, Handle, Interval, Timeout};
 use tokio_process::CommandExt;
 use tokio_signal::unix::{Signal, SIGTERM, SIGUSR1, SIGUSR2};
 
-const VERSION: &'static str = "1.0.0";
 const DEFAULT_CONTROL_FILE: &'static str = "./control.yaml";
 const DEFAULT_INTERVAL_SECS: &'static str = "5";
 const DEFAULT_MAX_CONCURRENT: &'static str = "1";
@@ -306,19 +305,39 @@ fn get_start_delay_from_next(next: &str) -> Result<Duration, String> {
                 Some(num) => num.as_str().parse::<u32>().unwrap(),
                 None => 0,
             };
+
             let now = Local::now();
+
             let start_at = if &time["interval"] == "hour" {
-                let next = now + chrono::Duration::hours(1);
-                Local::today().and_hms(next.hour(), after, 0)
+                // Start some number of minutes after the hour.
+                let start_minute = now.minute();
+                if start_minute <= after {
+                    // The start minute has not been reached within the current hour
+                    // so the difference the requested minute and now is the delay.
+                    now + chrono::Duration::minutes((after - start_minute) as i64)
+                } else {
+                    // The start minute has already been reached in the current hour, so
+                    // advance to the next hour after the present one, then add the "after"
+                    // value as minutes.
+                    let next = now + chrono::Duration::hours(1);
+                    Local::today().and_hms(next.hour(), after, 0)
+                }
             } else {
-                let next = now + chrono::Duration::minutes(1);
-                Local::today().and_hms(next.hour(), next.minute(), after)
+                // Start some number of seconds after the minute.
+                let start_second = now.minute();
+                if start_second <= after {
+                    // The start second has not been reached within the current minute
+                    // so the difference the requested second and now is the delay.
+                    now + chrono::Duration::seconds((after - start_second) as i64)
+                } else {
+                    // The start second has already been reached in the current second, so
+                    // advance to the next minute after the present one, then add the "after"
+                    // value as seconds.
+                    let next = now + chrono::Duration::minutes(1);
+                    Local::today().and_hms(next.hour(), next.minute(), after)
+                }
             };
-            let start_delay = match start_at.signed_duration_since(now).num_seconds() {
-                diff if diff >= 0 => diff as u64,
-                diff => DAY_SECONDS - (diff.abs() as u64),
-            };
-            Ok(Duration::from_secs(start_delay))
+            Ok(Duration::from_secs(start_at.signed_duration_since(now).num_seconds().abs() as u64))
         },
         None => Err(String::from(format!("invalid format for start time: {}", next)))
     }
@@ -348,8 +367,8 @@ fn get_start_delay_from_hh_mm(start_at: &str) -> Result<Duration, String> {
 fn main() {
 
     let matches = App::new("periodic")
-        .version(VERSION)
-        .author("Chuck Musser <cmusser@sonic.net>")
+        .version(crate_version!())
+        .author(crate_authors!())
         .about("run commands periodically")
         .arg(Arg::with_name("file").empty_values(false)
              .short("f").long("file")
