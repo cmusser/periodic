@@ -27,15 +27,25 @@ Use the following options on the command line:
 |Option|Description|Notes|
 |---|---|---|
 |`-i`|interval |The amount of time between each invocation, in seconds.|
-|`-c`|command |Command to invoke. If it has arguments, quote the whole thing.|
 |`-m`|max-concurrent|Maximum number of invocations allowed to launch.|
 |`-n`|name|Name for the periodic task.|
-|`-s`|start-time|start time for tasks, either "HH:MM" for an absolute time or "hour(+MM)" or "minute(+SS)" to start at the next hour or minute, with an optional extra delay. . Defaults to now.|
+|`-s`|start-time|start time for tasks, either "HH:MM" for an absolute time or "hour[+MM]" or "minute[+SS]" to start at the next hour or minute, with an optional extra delay. Defaults to now.|
+|COMMAND|The actual command to run, followed by its arguments.|This is specified in the same way as if the command were being run directly, with whitespace separated arguments. See the notes below on how to use commands that have flag arguments.|
 
 
 #### Example:
 
-	cargo run -- -i 2 -c 'ls -l /some/interesting/file'
+	periodic -i 2 ls /some/interesting/file
+
+If your command contains flags, place a `--` before the command so that `periodic` will not attempt to interpret those flags as its own. For example:
+
+	periodic -i 2 -- date -u
+
+**This is a change from earlier (1.x) versions of periodic that
+required the command to be specified by a `-c` flag, enclosed in
+quotes. The previous method made it harder to use from Docker, due to
+the difficulty with retaining whitespace in the arguments to Docker's
+`CMD` directive.**
 
 ### Using a Configuration File
 
@@ -58,7 +68,7 @@ ones are probably not appropriate for real-world use.
 
 #### Example:
 
-	cargo run -- -f periodic.yaml
+	periodic -f my-tasks.yaml
 
 ## Runtime Control
 

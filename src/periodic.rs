@@ -26,6 +26,7 @@ use futures::{future, Future, Stream};
 use regex::Regex;
 #[macro_use]
 extern crate serde_derive;
+use serde::{Deserialize, Deserializer};
 use tokio_core::reactor::{Core, Handle, Interval, Timeout};
 use tokio_process::CommandExt;
 use tokio_signal::unix::{Signal, SIGTERM, SIGUSR1, SIGUSR2};
@@ -44,7 +45,8 @@ struct PeriodicTask {
     interval_secs: u64,
     #[serde(default = "default_max_concurrent")]
     max_concurrent: u32,
-    cmd: String,
+    #[serde(deserialize_with = "cmd_from_config")]
+    cmd: Vec<String>,
 }
 
 #[derive(Clone, Copy, Deserialize, PartialEq)]
@@ -53,6 +55,14 @@ enum TaskMode {
     run,
     pause,
     stop,
+}
+
+fn cmd_from_config<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+    where D: Deserializer<'de>
+{
+    use serde::de::Error;
+    String::deserialize(deserializer)
+        .and_then(|string| shellwords::split(&string).map_err(|_| Error::custom("Mismatched quotes")))
 }
 
 struct TaskState {
@@ -202,11 +212,10 @@ fn get_monitor_future(task_db: Rc<TaskStateDb>,
 
 fn invoke_command(task: &PeriodicTask, task_db: &Rc<TaskStateDb>, handle: &Handle) {
     if task_db.incr_concurrent_maybe(&task.name, task.max_concurrent) {
-        let cmd_array = task.cmd.split_whitespace().collect::<Vec<&str>>();
         let task_db_clone = task_db.clone();
+        let (cmd_name, cmd_args) = (task.cmd[0].clone(), task.cmd[1..].into_iter());
         let task_name = task.name.clone();
-
-        match Command::new(&cmd_array[0]).args(cmd_array[1..].into_iter()).spawn_async(&handle) {
+        match Command::new(cmd_name).args(cmd_args).spawn_async(&handle) {
             Ok(command) => {
                 handle.spawn(command.map(|_| { (task_name, task_db_clone) })
                              .then(|args| {
@@ -279,11 +288,11 @@ fn run_futures_from_file(path: &str, task_db: Rc<TaskStateDb>, mut core: Core, s
 }
 
 fn run_future_from_args(matches: ArgMatches, task_db: Rc<TaskStateDb>, mut core: Core, start_delay: Duration) {
-    if let Some(cmd) = matches.value_of("command") {
+    if let Some(cmd) = matches.values_of("COMMAND") {
         let task = PeriodicTask { name: String::from(matches.value_of("name").unwrap()),
                                   interval_secs: matches.value_of("interval").unwrap().parse::<u64>().unwrap(),
                                   max_concurrent: matches.value_of("max-concurrent").unwrap().parse::<u32>().unwrap(),
-                                  cmd: String::from(cmd)};
+                                  cmd: cmd.map(|arg| arg.to_string()).collect()};
         let futures = vec![get_monitor_future(task_db.clone(), core.handle()),
                            get_signal_future(task_db.clone(), SIGUSR1, TaskMode::pause, core.handle()),
                            get_signal_future(task_db.clone(), SIGUSR2, TaskMode::run, core.handle()),
@@ -373,8 +382,7 @@ fn main() {
         .arg(Arg::with_name("file").empty_values(false)
              .short("f").long("file")
              .help("YAML file containing task descriptions. If set, overrides task-related args."))
-        .arg(Arg::with_name("command").empty_values(false)
-             .short("c").long("command")
+        .arg(Arg::with_name("COMMAND").multiple(true)
              .help("command to run periodically' (required if no command file specified)"))
         .arg(Arg::with_name("interval").empty_values(false)
              .short("i").long("interval").default_value(DEFAULT_INTERVAL_SECS)
