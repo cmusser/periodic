@@ -113,7 +113,7 @@ impl TaskStateDb {
         tasks_mut.get_mut(task_name).unwrap().mode
     }
 
-    fn incr_concurrent_maybe(&self, task_name: &str, max_concurrent: u32) -> bool {
+    fn init_process_if_allowed(&self, task_name: &str, max_concurrent: u32) -> bool {
         let mut tasks_mut = self.tasks.write().unwrap();
         let task = tasks_mut.get_mut(task_name).unwrap();
         if task.concurrent_count < max_concurrent {
@@ -129,7 +129,7 @@ impl TaskStateDb {
         }
     }
 
-    fn decr_concurrent(&self, task_name: &str) -> u32 {
+    fn finish_process(&self, task_name: &str) -> u32 {
         let mut tasks_mut = self.tasks.write().unwrap();
         let task = tasks_mut.get_mut(task_name).unwrap();
         task.concurrent_count -= 1;
@@ -211,7 +211,7 @@ fn get_monitor_future(task_db: Rc<TaskStateDb>,
 }
 
 fn invoke_command(task: &PeriodicTask, task_db: &Rc<TaskStateDb>, handle: &Handle) {
-    if task_db.incr_concurrent_maybe(&task.name, task.max_concurrent) {
+    if task_db.init_process_if_allowed(&task.name, task.max_concurrent) {
         let task_db_clone = task_db.clone();
         let (cmd_name, cmd_args) = (task.cmd[0].clone(), task.cmd[1..].into_iter());
         let task_name = task.name.clone();
@@ -220,7 +220,7 @@ fn invoke_command(task: &PeriodicTask, task_db: &Rc<TaskStateDb>, handle: &Handl
                 handle.spawn(command.map(|_| { (task_name, task_db_clone) })
                              .then(|args| {
                                  let (task_name, task_db) = args.unwrap();
-                                 let count = task_db.decr_concurrent(&task_name);
+                                 let count = task_db.finish_process(&task_name);
                                  if count > 0 {
                                      println!("\"{}\" finished, {} still running", task_name, count);
                                  }
@@ -229,7 +229,7 @@ fn invoke_command(task: &PeriodicTask, task_db: &Rc<TaskStateDb>, handle: &Handl
             },
             Err(e) =>  {
                 println!("couldn't start \"{}\": {}", task.name, e);
-                task_db.decr_concurrent(&task.name);
+                task_db.finish_process(&task.name);
             }
         }
     }
