@@ -186,7 +186,7 @@ fn read_control_file(list_filename: &str) -> Option<HashMap<String, TaskMode>> {
 }
 
 fn get_signal_future(task_db: Rc<TaskStateDb>, signum: i32, mode: TaskMode,
-                    handle: Handle) -> Box<Future<Item=(), Error=std::io::Error>> {
+                    handle: Handle) -> Box<dyn Future<Item=(), Error=std::io::Error>> {
     Box::new(Signal::new(signum, &handle).flatten_stream().for_each(move |signal| {
         println!("signal {} received", signal);
         task_db.set_all_task_modes(mode);
@@ -195,7 +195,7 @@ fn get_signal_future(task_db: Rc<TaskStateDb>, signum: i32, mode: TaskMode,
 }
 
 fn get_monitor_future(task_db: Rc<TaskStateDb>,
-                      handle: Handle) -> Box<Future<Item=(), Error=std::io::Error>> {
+                      handle: Handle) -> Box<dyn Future<Item=(), Error=std::io::Error>> {
 
     let interval = Interval::new(Duration::from_secs(1), &handle).unwrap();
     Box::new(interval.for_each(move |_| {
@@ -236,7 +236,7 @@ fn invoke_command(task: &PeriodicTask, task_db: &Rc<TaskStateDb>, handle: &Handl
 }
 
 fn get_task_future(task: PeriodicTask, task_db: Rc<TaskStateDb>,
-                   handle: Handle, start_delay: Duration) -> Box<Future<Item=(), Error=std::io::Error>> {
+                   handle: Handle, start_delay: Duration) -> Box<dyn Future<Item=(), Error=std::io::Error>> {
 
     let start_timeout: Timeout = Timeout::new(start_delay, &handle).unwrap();
 
@@ -269,7 +269,7 @@ fn run_futures_from_file(path: &str, task_db: Rc<TaskStateDb>, mut core: Core, s
                 Ok(_) => {
                     match serde_yaml::from_str::<Vec<PeriodicTask>>(&yaml) {
                         Ok(tasks_descriptions) => {
-                            let mut tasks: Vec<Box<Future<Item=(), Error=std::io::Error>>> = Vec::new();
+                            let mut tasks: Vec<Box<dyn Future<Item=(), Error=std::io::Error>>> = Vec::new();
                             tasks.push(get_monitor_future(task_db.clone(), core.handle()));
                             tasks.push(get_signal_future(task_db.clone(), SIGUSR1, TaskMode::pause, core.handle()));
                             tasks.push(get_signal_future(task_db.clone(), SIGUSR2, TaskMode::run, core.handle()));
