@@ -1,11 +1,7 @@
 #!/bin/sh
 
 START=$(date '+%H:%M:%S')
-if [ -f delay.txt ] ; then
-    DELAY=$(cat delay.txt)
-else
-    DELAY=5
-fi
+DELAY=${1:-5}
 echo -n "$0 (PID $$): "
 sleep $DELAY
 END=

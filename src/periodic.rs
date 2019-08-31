@@ -14,7 +14,7 @@ use std::fs::File;
 use std::io::ErrorKind;
 use std::io::prelude::*;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, ExitStatus};
 use std::rc::Rc;
 use std::str;
 use std::sync::RwLock;
@@ -77,12 +77,17 @@ impl TaskState {
 }
 
 struct TaskStateDb {
+    propagate_sigterm_to_children: bool,
     tasks: RwLock<HashMap<String, TaskState>>,
+    active_pids: RwLock<Vec<u32>>
 }
 
 impl TaskStateDb {
     fn new() -> TaskStateDb {
-        TaskStateDb { tasks: RwLock::new(HashMap::new()) }
+        TaskStateDb {
+            propagate_sigterm_to_children: false,
+            tasks: RwLock::new(HashMap::new()),
+            active_pids: RwLock::new(Vec::new())}
     }
 
     fn add_new_task(&self, task_name: &str) {
@@ -94,6 +99,18 @@ impl TaskStateDb {
         let mut tasks_mut = self.tasks.write().unwrap();
         for ref mut task in tasks_mut.values_mut() {
             task.mode = mode
+        }
+        if mode == TaskMode::stop {
+            let active_pids = self.active_pids.read().unwrap().clone();
+            if self.propagate_sigterm_to_children {
+                for pid in active_pids.into_iter() {
+                    println!("sending SIGTERM to {}", pid);
+                }
+            } else {
+                println!("waiting for PID(s): {}", active_pids.into_iter()
+                    .map(|pid| format!("{}", pid))
+                    .collect::<Vec<String>>().join(", "));
+            }
         }
     }
 
@@ -129,11 +146,36 @@ impl TaskStateDb {
         }
     }
 
-    fn finish_process(&self, task_name: &str) -> u32 {
+    fn start_process(&self, task_name: &str, pid: u32) {
+        println!("PID {} started for {}", pid, task_name);
+        self.active_pids.write().unwrap().push(pid);
+    }
+
+
+
+    fn finish_process(&self, task_name: &str, terminated_pid: u32, status: ExitStatus) {
+        let mut tasks_mut = self.tasks.write().unwrap();
+        let task = tasks_mut.get_mut(task_name).unwrap();
+
+        let mut active_pids_mut = self.active_pids.write().unwrap();
+        active_pids_mut.retain(|pid| *pid != terminated_pid);
+
+        task.concurrent_count -= 1;
+        let status_msg = match status.code() {
+            Some(code) => format!(" (exit status {})", code),
+            None => format!(" (terminated by signal)"),
+        };
+        println!("\"{}\": PID {} terminated{}{}", task_name,
+                 terminated_pid, status_msg,
+                 if task.concurrent_count > 0 {
+                     format!(", {} still running", task.concurrent_count)
+                 } else { format!("") });
+        }
+
+    fn cleanup_failed_process(&self, task_name: &str) {
         let mut tasks_mut = self.tasks.write().unwrap();
         let task = tasks_mut.get_mut(task_name).unwrap();
         task.concurrent_count -= 1;
-        task.concurrent_count
     }
 
     fn count_runnable(&self) -> usize {
@@ -217,19 +259,18 @@ fn invoke_command(task: &PeriodicTask, task_db: &Rc<TaskStateDb>, handle: &Handl
         let task_name = task.name.clone();
         match Command::new(cmd_name).args(cmd_args).spawn_async(&handle) {
             Ok(command) => {
-                handle.spawn(command.map(|_| { (task_name, task_db_clone) })
+                let pid = command.id();
+                task_db_clone.start_process(&task_name, pid);
+                handle.spawn(command.map(move |status| { (task_name, task_db_clone, pid, status) })
                              .then(|args| {
-                                 let (task_name, task_db) = args.unwrap();
-                                 let count = task_db.finish_process(&task_name);
-                                 if count > 0 {
-                                     println!("\"{}\" finished, {} still running", task_name, count);
-                                 }
+                                 let (task_name, task_db, pid, status) = args.unwrap();
+                                 task_db.finish_process(&task_name, pid, status);
                                  future::ok(())
                              }))
             },
             Err(e) =>  {
                 println!("couldn't start \"{}\": {}", task.name, e);
-                task_db.finish_process(&task.name);
+                task_db.cleanup_failed_process(&task.name);
             }
         }
     }
