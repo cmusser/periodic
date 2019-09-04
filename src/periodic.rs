@@ -425,7 +425,7 @@ fn run_future_from_args(
     }
 }
 
-fn get_start_delay_from_next(next: &str) -> Result<Duration, String> {
+fn get_start_delay_from_next(now: DateTime<Local>, next: &str) -> Result<Duration, String> {
     let re = Regex::new(r"(?P<interval>hour|minute)(\+(?P<after>\d{1,2}))?$").unwrap();
     match re.captures(next) {
         Some(time) => {
@@ -434,25 +434,31 @@ fn get_start_delay_from_next(next: &str) -> Result<Duration, String> {
                 None => 0,
             };
 
-            let now = Local::now();
-
             let start_at = if &time["interval"] == "hour" {
                 // Start some number of minutes after the hour.
                 let start_minute = now.minute();
                 if start_minute <= after {
                     // The start minute has not been reached within the current hour
                     // so the difference the requested minute and now is the delay.
-                    now + chrono::Duration::minutes((after - start_minute) as i64)
+                    let s = now + chrono::Duration::minutes((after - start_minute) as i64);
+                    println!("this hour + {}m: {:?}", after, s);
+                    s
                 } else {
                     // The start minute has already been reached in the current hour, so
                     // advance to the next hour after the present one, then add the "after"
                     // value as minutes.
                     let next = now + chrono::Duration::hours(1);
-                    Local::today().and_hms(next.hour(), after, 0)
+                    let s = Local.ymd(next.year(), next.month(), next.day()).and_hms(
+                        next.hour(),
+                        after,
+                        0,
+                    );
+                    println!("next hour + {}m: {:?}", after, s);
+                    s
                 }
             } else {
                 // Start some number of seconds after the minute.
-                let start_second = now.minute();
+                let start_second = now.second();
                 if start_second <= after {
                     // The start second has not been reached within the current minute
                     // so the difference the requested second and now is the delay.
@@ -462,7 +468,13 @@ fn get_start_delay_from_next(next: &str) -> Result<Duration, String> {
                     // advance to the next minute after the present one, then add the "after"
                     // value as seconds.
                     let next = now + chrono::Duration::minutes(1);
-                    Local::today().and_hms(next.hour(), next.minute(), after)
+                    let s = Local.ymd(next.year(), next.month(), next.day()).and_hms(
+                        next.hour(),
+                        next.minute(),
+                        after,
+                    );
+                    println!("Date: {:?}", s);
+                    s
                 }
             };
             Ok(Duration::from_secs(
@@ -473,6 +485,51 @@ fn get_start_delay_from_next(next: &str) -> Result<Duration, String> {
             "invalid format for start time: {}",
             next
         ))),
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn test_start_delay_next_hour_16_45_15_after() {
+    let cur_time = Local
+        .datetime_from_str("2019-09-02T16:45:00", "%Y-%m-%dT%H:%M:%S")
+        .unwrap();
+    match get_start_delay_from_next(cur_time, "hour+15") {
+        Ok(delay) => assert_eq!(delay, Duration::from_secs(1800)),
+        Err(e) => panic!(e),
+    }
+}
+
+#[test]
+fn test_start_delay_next_hour_22_45_15_after() {
+    let cur_time = Local
+        .datetime_from_str("2019-09-02T22:45:00", "%Y-%m-%dT%H:%M:%S")
+        .unwrap();
+    match get_start_delay_from_next(cur_time, "hour+15") {
+        Ok(delay) => assert_eq!(delay, Duration::from_secs(1800)),
+        Err(e) => panic!(e),
+    }
+}
+
+#[test]
+fn test_start_delay_next_hour_23_01_15_after() {
+    let cur_time = Local
+        .datetime_from_str("2019-09-02T23:01:00", "%Y-%m-%dT%H:%M:%S")
+        .unwrap();
+    match get_start_delay_from_next(cur_time, "hour+15") {
+        Ok(delay) => assert_eq!(delay, Duration::from_secs(840)),
+        Err(e) => panic!(e),
+    }
+}
+
+#[test]
+fn test_start_delay_next_hour_23_45_15_after() {
+    let cur_time = Local
+        .datetime_from_str("2019-09-02T23:45:00", "%Y-%m-%dT%H:%M:%S")
+        .unwrap();
+    match get_start_delay_from_next(cur_time, "hour+15") {
+        Ok(delay) => assert_eq!(delay, Duration::from_secs(1800)),
+        Err(e) => panic!(e),
     }
 }
 
@@ -562,9 +619,8 @@ fn main() {
         .get_matches();
 
     let start_delay = match matches.value_of("start-time") {
-        Some(value) => {
-            get_start_delay_from_next(value).or_else(|_| get_start_delay_from_hh_mm(value))
-        }
+        Some(value) => get_start_delay_from_next(Local::now(), value)
+            .or_else(|_| get_start_delay_from_hh_mm(value)),
         None => Ok(Duration::from_secs(0)),
     };
 
