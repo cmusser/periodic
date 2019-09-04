@@ -440,21 +440,15 @@ fn get_start_delay_from_next(now: DateTime<Local>, next: &str) -> Result<Duratio
                 if start_minute <= after {
                     // The start minute has not been reached within the current hour
                     // so the difference the requested minute and now is the delay.
-                    let s = now + chrono::Duration::minutes((after - start_minute) as i64);
-                    println!("this hour + {}m: {:?}", after, s);
-                    s
+                    now + chrono::Duration::minutes((after - start_minute) as i64)
                 } else {
                     // The start minute has already been reached in the current hour, so
                     // advance to the next hour after the present one, then add the "after"
                     // value as minutes.
                     let next = now + chrono::Duration::hours(1);
-                    let s = Local.ymd(next.year(), next.month(), next.day()).and_hms(
-                        next.hour(),
-                        after,
-                        0,
-                    );
-                    println!("next hour + {}m: {:?}", after, s);
-                    s
+                    Local
+                        .ymd(next.year(), next.month(), next.day())
+                        .and_hms(next.hour(), after, 0)
                 }
             } else {
                 // Start some number of seconds after the minute.
@@ -468,13 +462,11 @@ fn get_start_delay_from_next(now: DateTime<Local>, next: &str) -> Result<Duratio
                     // advance to the next minute after the present one, then add the "after"
                     // value as seconds.
                     let next = now + chrono::Duration::minutes(1);
-                    let s = Local.ymd(next.year(), next.month(), next.day()).and_hms(
+                    Local.ymd(next.year(), next.month(), next.day()).and_hms(
                         next.hour(),
                         next.minute(),
                         after,
-                    );
-                    println!("Date: {:?}", s);
-                    s
+                    )
                 }
             };
             Ok(Duration::from_secs(
