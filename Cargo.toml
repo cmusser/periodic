@@ -16,6 +16,10 @@ tokio-core = "0.1"
 tokio-process = "0.1.1"
 tokio-signal = "0.1.4"
 
+[lib]
+name = "periodic"
+path = "src/lib.rs"
+
 [[bin]]
 name = "periodic"
 path = "src/periodic.rs"
