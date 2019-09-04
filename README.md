@@ -9,7 +9,7 @@ Linux: [![Build Status](https://travis-ci.org/cmusser/periodic.svg?branch=master
 This program executes one or more commands on a periodic basis. The
 commands run asynchronously with respect to their timer, which means
 that an already-invoked process won't prevent the next invocation from
-starting on the desired interval. Limits on the number of
+starting on the desired interval. However, limits on the number of
 concurrently-running copies of a process are enforced. One use of
 `periodic` is inside Docker containers where something needs to happen
 repeatedly and you don't want to go through the hassle of of setting
@@ -110,9 +110,8 @@ The `test` directory contains some example scripts that can be run by
 `periodic-sample.yaml` and `control-sample.yaml`.
 
 - `print-delay.sh`: This sleeps a number of seconds and prints its
-  start and end time. By default, it sleeps for 5 seconds. If a file
-  named `delay.txt` exists in the same directory, it will read a
-  numeric value from that file and use that as the delay interval.
+  start and end time. By default, it sleeps for 5 seconds but you
+  can specify a different value as the first (and only) argument.
 
 - `print-multiline-stdout-stderr.sh`: prints 5 lines, alternating
    between std stdout and stderr, sleeping a second between each.
